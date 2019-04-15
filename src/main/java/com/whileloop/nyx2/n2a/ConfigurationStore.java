@@ -53,7 +53,7 @@ public class ConfigurationStore extends NX2Logger {
 
     private static final ConfigurationStore instance = new ConfigurationStore();
     private final Properties prop = new Properties();
-    private final String dirName = "~/.nx2";
+    private final String dirName = String.format("%s/.nyx2", System.getProperty("user.home"));
     private final String fileName = "config";
     private final String fileLocation = String.format("%s/%s", dirName, fileName);
 
