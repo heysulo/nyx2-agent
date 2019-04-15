@@ -63,7 +63,7 @@ public class N2Agent extends NX2Logger implements SClientCallback, NX2IntervalCl
     public N2Agent(String remoteAddress) {
         this.eventLoop = new NioEventLoopGroup();
         this.remoteAddress = remoteAddress;
-        this.shutdownInprogress = true;
+        this.shutdownInprogress = false;
 
         setVerboseLevel(Loglevel.DEBUG);
 
@@ -82,6 +82,7 @@ public class N2Agent extends NX2Logger implements SClientCallback, NX2IntervalCl
     }
 
     private void shutdownAgent() {
+        debug("Shutdown sequence initiated");
         this.shutdownInprogress = true;
         if (this.serverConnection != null){
             this.serverConnection.closeConnection();
@@ -97,7 +98,7 @@ public class N2Agent extends NX2Logger implements SClientCallback, NX2IntervalCl
         
         debug("Shutting down N2Agent");
         this.eventLoop.shutdownGracefully();
-        debug("N2Agent shutdown complete.");
+        debug("Shutdown sequence complete");
     }
 
     @Override
@@ -116,9 +117,11 @@ public class N2Agent extends NX2Logger implements SClientCallback, NX2IntervalCl
         }
         
         if (shutdownInprogress) {
+            debug("Disconnection procedures skipped due to shutdown sequence");
             return;
         }
         
+        debug("Creating Reconnecting Clock");
         this.reconClock = new NX2IntervalClock(eventLoop, this, 5, TimeUnit.SECONDS);
     }
 
