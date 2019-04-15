@@ -27,6 +27,7 @@ import com.whileloop.nyx2.messages.HeartBeatMessage;
 import com.whileloop.nyx2.messages.LoginMessage;
 import com.whileloop.nyx2.messages.LoginResponseMessage;
 import com.whileloop.nyx2.messages.ServerStatusMessage;
+import com.whileloop.nyx2.messages.TerminationMessage;
 import com.whileloop.nyx2.utils.NX2IntervalClock;
 import com.whileloop.nyx2.utils.NX2Logger;
 import com.whileloop.sendit.callbacks.SClientCallback;
@@ -57,10 +58,12 @@ public class N2Agent extends NX2Logger implements SClientCallback, NX2IntervalCl
     private int remotePort = 3000;
     private NX2IntervalClock hbClock;
     private NX2IntervalClock reconClock;
+    private boolean shutdownInprogress;
 
     public N2Agent(String remoteAddress) {
         this.eventLoop = new NioEventLoopGroup();
         this.remoteAddress = remoteAddress;
+        this.shutdownInprogress = true;
 
         setVerboseLevel(Loglevel.DEBUG);
 
@@ -79,6 +82,19 @@ public class N2Agent extends NX2Logger implements SClientCallback, NX2IntervalCl
     }
 
     private void shutdownAgent() {
+        this.shutdownInprogress = true;
+        if (this.serverConnection != null){
+            this.serverConnection.closeConnection();
+        }
+        debug("Shutting down Clocks");
+        if (this.hbClock != null) {
+            this.hbClock.stop();
+        }
+        
+        if (this.reconClock != null) {
+            this.reconClock.stop();
+        }
+        
         debug("Shutting down N2Agent");
         this.eventLoop.shutdownGracefully();
         debug("N2Agent shutdown complete.");
@@ -95,7 +111,14 @@ public class N2Agent extends NX2Logger implements SClientCallback, NX2IntervalCl
     @Override
     public void OnDisconnect(SClient client) {
         debug("OnDisconnect");
-        this.hbClock.stop();
+        if (this.hbClock != null) {
+            this.hbClock.stop();
+        }
+        
+        if (shutdownInprogress) {
+            return;
+        }
+        
         this.reconClock = new NX2IntervalClock(eventLoop, this, 5, TimeUnit.SECONDS);
     }
 
@@ -114,6 +137,8 @@ public class N2Agent extends NX2Logger implements SClientCallback, NX2IntervalCl
             handleLoginResponse((LoginResponseMessage) msg);
         } else if (msg instanceof HeartBeatMessage) {
             handleHeartBeat((HeartBeatMessage)msg);
+        } else if (msg instanceof TerminationMessage) {
+            handleTerminationMessage((TerminationMessage)msg);
         }
     }
 
@@ -195,6 +220,11 @@ public class N2Agent extends NX2Logger implements SClientCallback, NX2IntervalCl
         }
         debug("Authenticating using Credentials");
         this.serverConnection.Send(msg);
+    }
+
+    private void handleTerminationMessage(TerminationMessage terminationMessage) {
+        crit("Termination request recieved from N2CC: %s", terminationMessage.getDescription());
+        shutdownAgent();        
     }
 
 }
