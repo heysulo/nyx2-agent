@@ -33,6 +33,7 @@ import com.whileloop.sendit.callbacks.SClientCallback;
 import com.whileloop.sendit.client.SClient;
 import com.whileloop.sendit.messages.SMessage;
 import io.netty.channel.nio.NioEventLoopGroup;
+import java.io.Console;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 
@@ -43,19 +44,22 @@ import javax.net.ssl.SSLException;
 public class N2Agent extends NX2Logger implements SClientCallback, NX2IntervalClock.NX2IntervalClockCallback {
 
     public static void main(String[] args) {
+        if (args.length != 1){
+            System.err.println("Remote host address is not provided");
+            System.exit(1);
+        }
         N2Agent agent = new N2Agent(args[0]);
     }
 
     private SClient serverConnection;
     private final NioEventLoopGroup eventLoop;
-    private final NioEventLoopGroup dedicatedTimerEventLoop;
     private String remoteAddress;
     private int remotePort = 3000;
     private NX2IntervalClock hbClock;
+    private NX2IntervalClock reconClock;
 
     public N2Agent(String remoteAddress) {
         this.eventLoop = new NioEventLoopGroup();
-        this.dedicatedTimerEventLoop = new NioEventLoopGroup();
         this.remoteAddress = remoteAddress;
 
         setVerboseLevel(Loglevel.DEBUG);
@@ -83,11 +87,16 @@ public class N2Agent extends NX2Logger implements SClientCallback, NX2IntervalCl
     @Override
     public void OnConnect(SClient client) {
         debug("OnConnect");
+        if (this.reconClock != null) {
+            this.reconClock.stop();
+        }
     }
 
     @Override
     public void OnDisconnect(SClient client) {
         debug("OnDisconnect");
+        this.hbClock.stop();
+        this.reconClock = new NX2IntervalClock(eventLoop, this, 5, TimeUnit.SECONDS);
     }
 
     @Override
@@ -95,8 +104,7 @@ public class N2Agent extends NX2Logger implements SClientCallback, NX2IntervalCl
         debug("SMessage Recieved: %s", msg.getClass().getName());
         if (msg instanceof ServerStatusMessage) {
             if (((ServerStatusMessage) msg).isReady()) {
-                debug("Sending LoginMessage");
-                client.Send(new LoginMessage());
+                loginProcess();
             } else {
                 crit("Remote Agent Service is not Ready. try again later");
                 shutdownAgent();
@@ -134,6 +142,12 @@ public class N2Agent extends NX2Logger implements SClientCallback, NX2IntervalCl
     public void OnInterval(NX2IntervalClock clock) {
         if (clock == this.hbClock) {
             this.serverConnection.Send(new HeartBeatMessage());
+        } else if (clock == this.reconClock) {
+            try {
+                this.connectToServer();
+            } catch (Exception ex) {
+                crit("Reconnection attempt failed: %s", ex.getMessage());
+            }
         }
     }
 
@@ -145,11 +159,42 @@ public class N2Agent extends NX2Logger implements SClientCallback, NX2IntervalCl
         }
         
         info("Authentication Success!");
-        this.hbClock = new NX2IntervalClock(this.eventLoop, this, 5, TimeUnit.SECONDS);
+        if (this.hbClock != null){
+            this.hbClock.stop();
+        }
+        ConfigurationStore.setConfiguration(ConfigurationStore.ConfigKey.AUTH_TOKEN, msg.getAuthToken());
+        this.hbClock = new NX2IntervalClock(this.eventLoop, this, 1, TimeUnit.SECONDS);
     }
 
     private void handleHeartBeat(HeartBeatMessage msg) {
         debug("RTT: %dms", (System.currentTimeMillis() - msg.getCreationTime()));
+    }
+    
+    private void loginProcess() {
+        LoginMessage msg = new LoginMessage();
+        String authToken = ConfigurationStore.getConfiguration(ConfigurationStore.ConfigKey.AUTH_TOKEN);
+        if (authToken != null) {
+            msg.setMechanism(LoginMessage.LoginMechanism.AUTH_TOKEN);
+            msg.setAuthToken(authToken);
+            debug("Authenticating using AuthToken");
+            this.serverConnection.Send(msg);
+            return;
+        } 
+        
+        Console console = System.console();
+        if (console != null) {
+            System.out.println("+------------------- Authentication Required -------------------+\n\n");
+            msg.setEmail(console.readLine("Email Address: "));
+            char[] pwd = console.readPassword("Password: ");
+            msg.setPassword(new String(pwd));
+            System.out.println("\n\n+---------------------------------------------------------------+");
+            msg.setMechanism(LoginMessage.LoginMechanism.CREDENTIALS);
+        } else {
+            System.err.println("Unable to access System Console.");
+            shutdownAgent();
+        }
+        debug("Authenticating using Credentials");
+        this.serverConnection.Send(msg);
     }
 
 }
