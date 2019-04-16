@@ -180,8 +180,29 @@ public class N2Agent extends NX2Logger implements SClientCallback, NX2IntervalCl
     }
 
     private void handleLoginResponse(LoginResponseMessage msg) {
-        if (!msg.isAccepted()) {
-            crit("Authentication Failure. Email Address and Password does not match");
+        boolean success = false;
+        String errDesc = "Unknown";
+        
+        switch (msg.getResponse()){
+            case SUCCESS:
+                success = true;
+                break;
+            case INVALID_CREDENTIALS:
+                errDesc = "Email Address and Password do not match";
+                break;
+            case AUTH_TOKEN_EXPIRED:
+                ConfigurationStore.removeConfiguration(ConfigurationStore.ConfigKey.AUTH_TOKEN);
+                errDesc = "Authentication Token expired. Restart the agent and login again";
+                break;
+            case INTERNAL_ERROR:
+                errDesc = "Internal Server error. Please try again later";
+                break;
+            default:
+                throw new AssertionError(msg.getResponse().name());            
+        }
+        
+        if (!success) {
+            crit("Authentication Failure: %s", errDesc);
             shutdownAgent();
             return;
         }
